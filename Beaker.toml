@@ -1,0 +1,5 @@
+name = "mstr-ics721-wrapper"
+
+[wasm]
+contract_dir = 'contracts'
+optimizer_version = '0.13.0'
