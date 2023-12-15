@@ -116,10 +116,15 @@ pub fn reply(deps: DepsMut, _env: Env, msg: Reply) -> Result<Response, ContractE
 pub fn execute_register_collection(
     deps: DepsMut,
     env: Env,
-    _info: MessageInfo,
+    info: MessageInfo,
     original_collection: String,
     new_collection: MirroredData,
 ) -> Result<Response, ContractError> {
+    // only controller can register collection
+    if info.sender != CONTROLLER.load(deps.storage)? {
+        return Err(ContractError::Unauthorized {});
+    }
+
     let mut res = Response::new();
     // if the original collection is not in the list, then we must create new mirror for it
     if !ORIGINAL_COLLECTIONS.has(deps.storage, deps.api.addr_validate(&original_collection)?) {
