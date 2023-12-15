@@ -79,6 +79,15 @@ pub fn execute(
 pub fn query(deps: Deps, _env: Env, msg: QueryMsg) -> StdResult<Binary> {
     match msg {
         QueryMsg::Controller {} => to_json_binary(&query_controller(deps)?),
+        QueryMsg::OriginalCollectionInfo { collection_address } => to_json_binary(
+            &ORIGINAL_COLLECTIONS
+                .load(deps.storage, deps.api.addr_validate(&collection_address)?)?,
+        ),
+        QueryMsg::MirroredCollectionInfo { collection_address } => to_json_binary(
+            &MIRRORED_COLLECTIONS
+                .load(deps.storage, deps.api.addr_validate(&collection_address)?)?,
+        ),
+        QueryMsg::WrapData { index } => to_json_binary(&WRAP_DATA.load(deps.storage, index)?),
     }
 }
 

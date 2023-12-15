@@ -1,6 +1,6 @@
 use cosmwasm_schema::{cw_serde, QueryResponses};
 
-use crate::state::MirroredData;
+use crate::state::{MirroredData, WrapData};
 
 /// Message type for `instantiate` entry_point
 /// Maybe we don't need a new cw20 contract, just use the cw20-base contract
@@ -33,6 +33,12 @@ pub enum ExecuteMsg {
 pub enum QueryMsg {
     #[returns(String)]
     Controller {},
+    #[returns(u64)]
+    OriginalCollectionInfo { collection_address: String },
+    #[returns(u64)]
+    MirroredCollectionInfo { collection_address: String },
+    #[returns(WrapData)]
+    WrapData { index: u64 },
 }
 
 #[cw_serde]
