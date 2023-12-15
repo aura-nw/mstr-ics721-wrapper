@@ -1,8 +1,8 @@
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
-    to_json_binary, Addr, Binary, CosmosMsg, Deps, DepsMut, Env, MessageInfo, QueryRequest, Reply,
-    ReplyOn, Response, StdResult, SubMsg, WasmMsg, WasmQuery,
+    to_json_binary, Addr, Binary, CosmosMsg, Deps, DepsMut, Empty, Env, MessageInfo, QueryRequest,
+    Reply, ReplyOn, Response, StdResult, SubMsg, WasmMsg, WasmQuery,
 };
 use cw2::set_contract_version;
 use cw721::{
@@ -282,7 +282,7 @@ pub fn execute_wrap(
             }));
 
         // decide the token uri and extension
-        let (token_uri, extension) = match token_info_response {
+        let (token_uri, _extension) = match token_info_response {
             Ok(token_info) => {
                 // if the token_uri of mirrored data is not empty, then use it
                 if wrap_data.mirrored_data.base_uri.is_some() {
@@ -310,7 +310,7 @@ pub fn execute_wrap(
             owner: info.sender.to_string(),
             token_id: token_id.to_string(),
             token_uri,
-            extension,
+            extension: Empty::default(),
         };
         res = res.add_message(WasmMsg::Execute {
             contract_addr: wrap_data.mirrored_collection.to_string(),
@@ -361,7 +361,7 @@ pub fn execute_unwrap(
             }));
         match owner_response {
             Ok(owner) => {
-                if owner.owner != wrap_data.mirrored_collection {
+                if owner.owner != info.sender {
                     return Err(ContractError::NotOwnedBySender {
                         val: token_id.to_string(),
                     });
