@@ -5,15 +5,18 @@ use cosmwasm_std::{
     ReplyOn, Response, StdResult, SubMsg, WasmMsg, WasmQuery,
 };
 use cw2::set_contract_version;
-use cw721::{ContractInfoResponse as Cw721ContractInfoResponse, Cw721QueryMsg};
-use cw721_base::msg::InstantiateMsg as Cw721InstantiateMsg;
+use cw721::{
+    ContractInfoResponse as Cw721ContractInfoResponse, Cw721ExecuteMsg, Cw721QueryMsg,
+    NftInfoResponse as Cw721NftInfoResponse, OwnerOfResponse,
+};
+use cw721_base::msg::{ExecuteMsg as Cw721BaseExecuteMsg, InstantiateMsg as Cw721InstantiateMsg};
 use cw_utils::parse_reply_instantiate_data;
 
 use crate::error::ContractError;
 use crate::msg::{ExecuteMsg, InstantiateMsg, QueryMsg};
 use crate::state::{
-    MirroredData, WrapData, CONTROLLER, CW721_CODE_ID, MIRRORED_COLLECTIONS, ORIGINAL_COLLECTIONS,
-    TOTAL_WRAPPED, WRAP_DATA,
+    Extension, MirroredData, WrapData, CONTROLLER, CW721_CODE_ID, MIRRORED_COLLECTIONS,
+    ORIGINAL_COLLECTIONS, TOTAL_WRAPPED, WRAP_DATA,
 };
 
 // version info for migration info
@@ -60,7 +63,10 @@ pub fn execute(
             collection_address,
             token_ids,
         } => execute_wrap(deps, env, info, collection_address, token_ids),
-        ExecuteMsg::Unwrap { token_ids } => execute_unwrap(deps, env, info, token_ids),
+        ExecuteMsg::Unwrap {
+            collection_address,
+            token_ids,
+        } => execute_unwrap(deps, env, info, collection_address, token_ids),
         ExecuteMsg::RegisterCollection {
             original_collection,
             new_collection,
@@ -176,8 +182,7 @@ pub fn execute_register_collection(
                     mirrored_data: MirroredData {
                         collection_name: new_collection.collection_name,
                         collection_symbol: new_collection.collection_symbol,
-                        description: new_collection.description,
-                        token_data: new_collection.token_data,
+                        base_uri: new_collection.base_uri,
                     },
                     active: false,
                 };
@@ -196,13 +201,111 @@ pub fn execute_register_collection(
 }
 
 pub fn execute_wrap(
-    _deps: DepsMut,
-    _env: Env,
-    _info: MessageInfo,
+    deps: DepsMut,
+    env: Env,
+    info: MessageInfo,
     collection_address: String,
     token_ids: Vec<String>,
 ) -> Result<Response, ContractError> {
-    Ok(Response::new().add_attributes([
+    // if the collection is not registered, then return error
+    if !ORIGINAL_COLLECTIONS.has(deps.storage, deps.api.addr_validate(&collection_address)?) {
+        return Err(ContractError::CollectionNotAllowed {});
+    }
+
+    // if the original collection status is not active, then return error
+    let wrap_data = WRAP_DATA.load(
+        deps.storage,
+        ORIGINAL_COLLECTIONS.load(deps.storage, deps.api.addr_validate(&collection_address)?)?,
+    )?;
+    if !wrap_data.active {
+        return Err(ContractError::CollectionDeactivated {});
+    }
+
+    let mut res = Response::new();
+
+    for token_id in token_ids.iter() {
+        // if the token id are not owned by the sender, then return error
+        let owner_response: StdResult<OwnerOfResponse> =
+            deps.querier.query(&QueryRequest::Wasm(WasmQuery::Smart {
+                contract_addr: collection_address.clone(),
+                msg: to_json_binary(&Cw721QueryMsg::OwnerOf {
+                    token_id: token_id.to_string(),
+                    include_expired: None,
+                })?,
+            }));
+        match owner_response {
+            Ok(owner) => {
+                if owner.owner != info.sender {
+                    return Err(ContractError::NotOwnedBySender {
+                        val: token_id.to_string(),
+                    });
+                }
+            }
+            Err(_) => {
+                return Err(ContractError::NotOwnedBySender {
+                    val: token_id.to_string(),
+                });
+            }
+        }
+
+        // transfer the token to the contract
+        res = res.add_message(CosmosMsg::Wasm(WasmMsg::Execute {
+            contract_addr: collection_address.clone(),
+            msg: to_json_binary(&Cw721ExecuteMsg::TransferNft {
+                recipient: env.contract.address.to_string(),
+                token_id: token_id.to_string(),
+            })?,
+            funds: vec![],
+        }));
+
+        // query info of the token
+        let token_info_response: StdResult<Cw721NftInfoResponse<Extension>> =
+            deps.querier.query(&QueryRequest::Wasm(WasmQuery::Smart {
+                contract_addr: collection_address.clone(),
+                msg: to_json_binary(&Cw721QueryMsg::NftInfo {
+                    token_id: token_id.to_string(),
+                })?,
+            }));
+
+        // decide the token uri and extension
+        let (token_uri, extension) = match token_info_response {
+            Ok(token_info) => {
+                // if the token_uri of mirrored data is not empty, then use it
+                if wrap_data.mirrored_data.base_uri.is_some() {
+                    (
+                        Some(format!(
+                            "{}{}.json",
+                            wrap_data.mirrored_data.base_uri.clone().unwrap(),
+                            token_id
+                        )),
+                        token_info.extension,
+                    )
+                } else {
+                    (token_info.token_uri, token_info.extension)
+                }
+            }
+            Err(_) => {
+                return Err(ContractError::CustomError {
+                    val: format!("Cannot query token info of {}", token_id),
+                });
+            }
+        };
+
+        // mint mirrored token to the sender
+        let mint_msg: Cw721BaseExecuteMsg<_, Extension> = Cw721BaseExecuteMsg::Mint {
+            owner: info.sender.to_string(),
+            token_id: token_id.to_string(),
+            token_uri,
+            extension,
+        };
+        res = res.add_message(WasmMsg::Execute {
+            contract_addr: wrap_data.mirrored_collection.to_string(),
+            msg: to_json_binary(&mint_msg)?,
+            funds: vec![],
+        });
+    }
+
+    Ok(res.add_attributes([
         ("method", "wrap"),
         ("collection_address", &collection_address),
         ("token_ids", &token_ids.join(",")),
@@ -210,12 +313,78 @@ pub fn execute_wrap(
 }
 
 pub fn execute_unwrap(
-    _deps: DepsMut,
+    deps: DepsMut,
     _env: Env,
-    _info: MessageInfo,
+    info: MessageInfo,
+    collection_address: String,
     token_ids: Vec<String>,
 ) -> Result<Response, ContractError> {
-    Ok(Response::new().add_attributes([("method", "unwrap"), ("token_ids", &token_ids.join(","))]))
+    // if the collection is not registered, then return error
+    if !MIRRORED_COLLECTIONS.has(deps.storage, deps.api.addr_validate(&collection_address)?) {
+        return Err(ContractError::CollectionNotAllowed {});
+    }
+
+    // if the mirrored collection status is not active, then return error
+    let wrap_data = WRAP_DATA.load(
+        deps.storage,
+        MIRRORED_COLLECTIONS.load(deps.storage, deps.api.addr_validate(&collection_address)?)?,
+    )?;
+    if !wrap_data.active {
+        return Err(ContractError::CollectionDeactivated {});
+    }
+
+    let mut res = Response::new();
+
+    for token_id in token_ids.iter() {
+        // if the token id are not owned by the sender, then return error
+        let owner_response: StdResult<OwnerOfResponse> =
+            deps.querier.query(&QueryRequest::Wasm(WasmQuery::Smart {
+                contract_addr: collection_address.clone(),
+                msg: to_json_binary(&Cw721QueryMsg::OwnerOf {
+                    token_id: token_id.to_string(),
+                    include_expired: None,
+                })?,
+            }));
+        match owner_response {
+            Ok(owner) => {
+                if owner.owner != wrap_data.mirrored_collection {
+                    return Err(ContractError::NotOwnedBySender {
+                        val: token_id.to_string(),
+                    });
+                }
+            }
+            Err(_) => {
+                return Err(ContractError::NotOwnedBySender {
+                    val: token_id.to_string(),
+                });
+            }
+        }
+
+        // burn the mirrored token
+        res = res.add_message(CosmosMsg::Wasm(WasmMsg::Execute {
+            contract_addr: collection_address.clone(),
+            msg: to_json_binary(&Cw721ExecuteMsg::Burn {
+                token_id: token_id.to_string(),
+            })?,
+            funds: vec![],
+        }));
+
+        // transfer the original token to the sender
+        res = res.add_message(CosmosMsg::Wasm(WasmMsg::Execute {
+            contract_addr: wrap_data.original_collection.to_string(),
+            msg: to_json_binary(&Cw721ExecuteMsg::TransferNft {
+                recipient: info.sender.to_string(),
+                token_id: token_id.to_string(),
+            })?,
+            funds: vec![],
+        }));
+    }
+
+    Ok(res.add_attributes([
+        ("method", "unwrap"),
+        ("collection_address", &collection_address),
+        ("token_ids", &token_ids.join(",")),
+    ]))
 }
 
 pub fn query_controller(deps: Deps) -> StdResult<Addr> {

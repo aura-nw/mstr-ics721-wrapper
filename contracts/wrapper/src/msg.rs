@@ -18,6 +18,7 @@ pub enum ExecuteMsg {
         token_ids: Vec<String>,
     },
     Unwrap {
+        collection_address: String,
         token_ids: Vec<String>,
     },
     RegisterCollection {
