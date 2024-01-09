@@ -66,3 +66,11 @@ pub struct MirroredData {
     pub collection_symbol: Option<String>,
     pub base_uri: Option<String>,
 }
+
+/// This ContractInfoResponse is used for SeekHype
+#[cw_serde]
+pub struct ContractInfoResponse {
+    pub name: String,
+    pub symbol: String,
+    pub creator: Option<String>,
+}

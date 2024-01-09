@@ -6,8 +6,7 @@ use cosmwasm_std::{
 };
 use cw2::set_contract_version;
 use cw721::{
-    ContractInfoResponse as Cw721ContractInfoResponse, Cw721ExecuteMsg, Cw721QueryMsg,
-    NftInfoResponse as Cw721NftInfoResponse, OwnerOfResponse,
+    Cw721ExecuteMsg, Cw721QueryMsg, NftInfoResponse as Cw721NftInfoResponse, OwnerOfResponse,
 };
 use cw721_base::msg::{ExecuteMsg as Cw721BaseExecuteMsg, InstantiateMsg as Cw721InstantiateMsg};
 use cw_utils::parse_reply_instantiate_data;
@@ -15,12 +14,13 @@ use cw_utils::parse_reply_instantiate_data;
 use crate::error::ContractError;
 use crate::msg::{ExecuteMsg, InstantiateMsg, QueryMsg};
 use crate::state::{
-    Extension, MirroredData, WrapData, CONTROLLER, CW721_CODE_ID, MIRRORED_COLLECTIONS,
-    ORIGINAL_COLLECTIONS, TOTAL_WRAPPED, WRAP_DATA,
+    ContractInfoResponse as Cw721ContractInfoResponse, Extension, MirroredData, WrapData,
+    CONTROLLER, CW721_CODE_ID, MIRRORED_COLLECTIONS, ORIGINAL_COLLECTIONS, TOTAL_WRAPPED,
+    WRAP_DATA,
 };
 
 // version info for migration info
-const CONTRACT_NAME: &str = "crates.io:wrapper";
+const CONTRACT_NAME: &str = "crates.io:wrapper-seekhype";
 const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Handling contract instantiation
